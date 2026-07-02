@@ -26,7 +26,7 @@ import {
 } from "../shared/constants.js";
 import { ENEMIES } from "../shared/enemies.js";
 import { FACTION_IDS, factionById } from "../shared/factions.js";
-import { itemPower } from "../shared/loot.js";
+import { forgeRaidDrop, itemPower } from "../shared/loot.js";
 import { freshMarket } from "../shared/market.js";
 import { passivePointsFor, passiveTreePayload } from "../shared/passive-tree.js";
 import {
@@ -526,7 +526,7 @@ app.post(
       return;
     }
     const world = store.getWorldState();
-    const out = runPartyDelve({ world, store, token, character: rec.character, bossDrops });
+    const out = runPartyDelve({ world, store, token, character: rec.character });
     if (!out.ok) {
       res.status(400).json(out);
       return;
@@ -2355,13 +2355,6 @@ function startMonster(fromLogin) {
   return currentRaid;
 }
 
-// Gemma boss-drop forge (Phase D). Default OFF (BOSS_DROPS_LIVE unset) ⇒
-// forgeOrCached is exactly forgeRaidDrop and warm() is a no-op, so raid loot is
-// byte-identical to before. When enabled, the FIRST kill of a boss ships the
-// deterministic drop + warms an off-tick Gemma re-theme; later kills get the
-// cached, validated enrichment instantly. The LLM is never awaited on the kill path.
-const bossDrops = createBossDropForge({});
-
 function endRaid(victory, lastHitLogin) {
   if (!currentRaid) return null;
   const raid = currentRaid;
@@ -2408,13 +2401,8 @@ function endRaid(victory, lastHitLogin) {
         rec.character.lifetimeKills = (rec.character.lifetimeKills || 0) + 1;
         if (isBoss) {
           const lvl = rec.character.run?.level || 1;
-          // Instant, sync: cached Gemma enrichment if warm, else the deterministic
-          // forge. NEVER awaits the model on the kill path.
-          const item = bossDrops.forgeOrCached(raid.boss_id, lvl);
-          // Fire-and-forget: warm the cache off-tick for the next kill of this boss.
-          bossDrops
-            .warm(raid.boss_id, lvl, { killerLevel: lvl, zone: raid.bossZone })
-            .catch(() => {});
+          // Deterministic, sync, instant — nothing is awaited on the kill path.
+          const item = forgeRaidDrop(raid.boss_id, lvl);
           if (item) {
             const inv = rec.character.run?.inventory;
             if (Array.isArray(inv) && inv.length < INVENTORY_MAX) {
@@ -3175,10 +3163,10 @@ const oracle = attachOracleBazaar(app, {
 });
 superviseInterval("oracle.sweep", () => oracle.sweep(), 15_000);
 
-// Gemma NPC proposal lane (integrate-this PR7) — its OWN supervised 15s loop,
-// strictly OFF the 3s world tick. Proposes bounded controller state for one NPC
-// per cycle (deterministic fallback by default; live Gemma env-gated). A slow or
-// failing model call is contained here and can never enter the tick budget.
+// Rules-based NPC proposal lane (PR7) — its OWN supervised 15s loop, strictly
+// OFF the 3s world tick. Proposes bounded controller state for a batch of NPCs
+// per cycle from deterministic archetype routines, so planner work can never
+// enter the tick budget.
 const npcPlanner = attachNpcPlanner({ store });
 superviseInterval(
   "npc.plan",
@@ -3190,8 +3178,8 @@ superviseInterval(
 
 // Director / game-master (PR9) — ONE world-level brain proposing bounded public
 // beats off the tick, paced (see DIRECTOR_BEAT_COOLDOWN_TICKS). Deterministic
-// fallback by default; live Gemma deferred (DIRECTOR_LIVE). Its own supervised
-// loop, NOT a second world timer (PSU power safety).
+// (curated beat tables keyed by world pressure). Its own supervised loop, NOT a
+// second world timer (PSU power safety).
 const director = attachDirector({ store });
 superviseInterval(
   "sigmacraft.director",
