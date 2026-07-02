@@ -52,7 +52,6 @@ import { ZONES } from "../shared/zones.js";
 import { attachAgentRealm } from "./agent-realm.js";
 import * as arena from "./arena.js";
 import { refreshLastSeen } from "./arena.js";
-import { createBossDropForge } from "./cerebras-boss-drops.js";
 import { dispatchCommand, factionRepView, joinFaction, resolveFactionId } from "./commands.js";
 import * as drops from "./drops.js";
 import { delveFeedback } from "./feedback.js";
